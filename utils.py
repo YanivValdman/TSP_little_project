@@ -2,6 +2,7 @@ from scipy.spatial import ConvexHull, convex_hull_plot_2d
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import euclidean
+import cv2
 
 
 def compute_tsp_with_convex_hull(points):
@@ -49,8 +50,15 @@ def compute_tsp_with_convex_hull(points):
 
 
 def plot_tsp_path(points, path):
+    # Ensure points and path are NumPy arrays for comparison
+    points = np.array(points)
+    path = np.array(path)
+
     # Convert path to indices for easier plotting
-    path_indices = [np.where((points == p).all(axis=1))[0][0] for p in path]
+    try:
+        path_indices = [np.where((points == p).all(axis=1))[0][0] for p in path]
+    except AttributeError:
+        raise ValueError("Ensure `points` and `path` have matching structures and types.")
 
     # Prepare the plot
     plt.figure(figsize=(8, 6))
@@ -73,6 +81,41 @@ def plot_tsp_path(points, path):
     plt.grid()
     plt.show()
     
+def draw_path_on_image(image, points, path):
+    """
+    Draw the TSP solution path on a copy of the image.
+
+    Args:
+        image (np.ndarray): The original image.
+        points (list): List of TSP points as (x, y) tuples.
+        path (list): The computed TSP path as a list of (x, y) tuples.
+
+    Returns:
+        np.ndarray: The image with the path drawn on it.
+    """
+    # Make a copy of the image to draw on
+    image_with_path = image.copy()
+
+    # Draw the TSP path
+    for i in range(len(path) - 1):
+        start_point = tuple(map(int, path[i]))
+        end_point = tuple(map(int, path[i + 1]))
+        cv2.line(image_with_path, start_point, end_point, (0, 255, 0), 2)  # Green line
+
+    # Draw the points with labels
+    for idx, (x, y) in enumerate(points):
+        cv2.circle(image_with_path, (int(x), int(y)), 6, (0, 0, 255), -1)  # Red circle
+        cv2.putText(
+            image_with_path,
+            str(idx),
+            (int(x) + 10, int(y) - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )  # White text
+
+    return image_with_path    
 if __name__ == "__main__":
     points = np.array([[0.80007683, 0.20169368],
  [0.43482329, 0.03859274],

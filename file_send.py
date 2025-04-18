@@ -4,6 +4,7 @@ from time import sleep
 from scipy.spatial.distance import euclidean
 from itertools import permutations
 from picamera2 import MappedArray, Picamera2, Preview
+from utils import compute_tsp_with_convex_hull, plot_tsp_path, draw_path_on_image
 
 def capture_image():
     picam2 = Picamera2()
@@ -33,7 +34,6 @@ def detect_aruco_markers(image):
 
 def get_perspective_transform(image, marker_map):
     corner_ids = [1, 2, 3, 4]
-    print(marker_map)
     if not all(cid in marker_map for cid in corner_ids):
         raise Exception("Missing one or more corner markers (IDs 1–4)")
 
@@ -56,16 +56,64 @@ def get_perspective_transform(image, marker_map):
 
 
 def get_tsp_points(marker_map, M):
+    """
+    Extract TSP points that fall within the rectangle defined by corner markers.
+
+    Args:
+        marker_map (dict): Dictionary mapping marker IDs to their corner points.
+        M (np.ndarray): Perspective transformation matrix.
+
+    Returns:
+        list: List of valid TSP points as (x, y) tuples.
+    """
+    # Get the corner IDs
+    corner_ids = [1, 2, 3, 4]
+    rectangle_points = []
+
+    # Ensure all corner IDs are present
+    for cid in corner_ids:
+        if cid in marker_map:
+            pts = marker_map[cid][0]
+            cx = int(np.mean(pts[:, 0]))
+            cy = int(np.mean(pts[:, 1]))
+            rectangle_points.append((cx, cy))
+        else:
+            raise Exception(f"Missing corner marker with ID {cid}")
+
+    print(f"{rectangle_points = }")
+    
+    
+    # Compute the bounding box of the rectangle
+    min_x = min(p[0] for p in rectangle_points)
+    max_x = max(p[0] for p in rectangle_points)
+    min_y = min(p[1] for p in rectangle_points)
+    max_y = max(p[1] for p in rectangle_points)
+    
+    print(f"{min_x = }")
+    print(f"{max_x = }")
+    print(f"{min_y = }")
+    print(f"{max_y = }")
+
     tsp_points = []
     for id, corners in marker_map.items():
-        if id in [1, 2, 3, 4]:
-            continue
+        if id in corner_ids:
+            continue  # Skip corner markers
+
+        # Calculate the center of the marker
         pts = corners[0]
         cx = int(np.mean(pts[:, 0]))
         cy = int(np.mean(pts[:, 1]))
         pt = np.array([[[cx, cy]]], dtype="float32")
         warped_pt = cv2.perspectiveTransform(pt, M)[0][0]
-        tsp_points.append((int(warped_pt[0]), int(warped_pt[1])))
+        wx, wy = int(warped_pt[0]), int(warped_pt[1])
+        print(f"{id = }")
+        print(f"{wx = }")
+        print(f"{wy = }")
+
+        # Check if the point lies within the bounding box
+        if min_x <= wx <= max_x and min_y <= wy <= max_y:
+            tsp_points.append((wx, wy))  # Add only valid points
+
     return tsp_points
 
 
@@ -96,15 +144,15 @@ def draw_path(image, points, path):
 
 # --- Main Execution ---
 def main():
-    #image = cv2.imread("raw.jpg")  # replace with camera capture if needed
+    image = cv2.imread("raw.jpg")  # replace with camera capture if needed
     expected_points = 6
-    image = capture_image()
-    cv2.imwrite("raw.jpg", image)
+#     image = capture_image()
+#     cv2.imwrite("raw.jpg", image)
     if image is None:
         print("Error loading image.")
         return
 
-    marker_map, _ = detect_aruco_markers(image)
+    marker_map, corners = detect_aruco_markers(image)
 
     try:
         warped, M = get_perspective_transform(image, marker_map)
@@ -113,22 +161,28 @@ def main():
         return
 
     points = get_tsp_points(marker_map, M)
+    print("points")
+    print(points)
     
     if len(points) != expected_points:
-        print("Not the expected number of points.")
+        print("Not the expected number of points. Expected:", expected_points, "But got:", len(points))
         return
     
     if len(points) < 2:
         print("Not enough TSP points.")
         return
 
-    path, cost = tsp_bruteforce(points)
+#     path, cost = tsp_bruteforce(points)
+    path, cost = compute_tsp_with_convex_hull(points)
     print("Optimal Path:", path)
     print("Total Distance:", cost)
 
-    result = draw_path(warped.copy(), points, path)
-    cv2.imshow("TSP Result", result)
-    cv2.imwrite("tsp_result.png", result)
+     # Draw the TSP path on the image
+    image_with_path = draw_path_on_image(warped, points, path)
+
+    # Display or save the result
+    cv2.imshow("TSP Path on Image", image_with_path)
+    cv2.imwrite("tsp_solution.png", image_with_path)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
