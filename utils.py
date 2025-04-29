@@ -115,7 +115,22 @@ def draw_path_on_image(image, points, path):
             1,
         )  # White text
 
-    return image_with_path    
+    return image_with_path
+
+
+def detect_aruco_markers(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_5X5_1000)
+    parameters = cv2.aruco.DetectorParameters_create()
+
+    corners, ids, _ = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+    if ids is None:
+        return {}, []
+    ids = ids.flatten()
+    marker_map = dict(zip(ids, corners))
+    return marker_map, corners
+
 if __name__ == "__main__":
     points = np.array([[0.80007683, 0.20169368],
  [0.43482329, 0.03859274],
