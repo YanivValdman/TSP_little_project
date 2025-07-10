@@ -25,6 +25,7 @@ The repository includes a file called `aruco.pdf`, which contains printable ArUc
 
 - **Markers 1-4:**  
   These should be printed and placed at the **corners** of the workspace. They are used to calibrate and warp the camera image so all detected points are mapped correctly.
+  - **Distance requirement:** The system expects that the distance between any two adjacent corners is **1.3 meters**. This is used for calibration and accurate distance measurement in the UI.
 - **Marker 10:**  
   This is used as the **default moving marker**. Attach this to the robot or moving object you want to track.
 - **Other Markers:**  
@@ -100,6 +101,7 @@ On launch, you'll see a menu:
 1. **Marker Detection**:
    - Four ArUco markers (IDs 1-4) mark the corners of the field of view.
    - Additional markers are placed as TSP points (targets) and one is tracked as the "moving" point (default ID 10).
+   - **Calibration:** The distance between any two adjacent corners should be **1.3 meters**. This physical distance is used by the system to calibrate pixels to real-world meters.
 
 2. **Image Warping**:
    - The image is rectified (warped) based on corner marker detection for accurate TSP computation.
@@ -146,8 +148,7 @@ On launch, you'll see a menu:
 
 ## License
 
-No license specified.  
-If you wish to open source this project, consider adding a license file (e.g., MIT, GPL, etc.).
+No license specified.
 
 ---
 
