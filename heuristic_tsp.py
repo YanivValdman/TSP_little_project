@@ -83,17 +83,19 @@ def detect_tsp_points_in_warped_image(warped_image):
 def main():
     image = capture_image()
     cv2.imwrite("raw.jpg", image)
-    expected_points = 17
+    expected_points = 3
     if image is None:
         print("Error loading image.")
         return
 
     try:
         # Step 1: Detect corners and warp the image
-        warped, M = detect_corners_and_warp(image)
+        
+        #warped, M = detect_corners_and_warp(image)
+        warped = cv2.resize(image, (0, 0), fx = 0.7, fy = 0.7) #added by TOM
 
         # Step 2: Detect TSP points in the warped image
-        points = detect_tsp_points_in_warped_image(warped)
+        points = detect_tsp_points_in_warped_image(warped) 
     except Exception as e:
         print("Error:", e)
         return
@@ -108,12 +110,14 @@ def main():
         return
 
     # Step 4: Solve TSP and display the result
+    
     path, cost = compute_tsp_with_convex_hull(points)
     print("Optimal Path:", path)
     print("Total Distance:", cost)
 
     # Step 5: Draw the TSP path on the warped image
     image_with_path = draw_path_on_image(warped, points, path)
+    image_with_path = cv2.resize(image_with_path, (0, 0), fx = 0.5, fy = 0.5) #added by TOM
 
     # Display or save the result
     cv2.imshow("TSP Path on Warped Image", image_with_path)
