@@ -8,11 +8,14 @@ from picamera2 import Picamera2
 from utils import detect_aruco_markers
 from heuristic_tsp import detect_tsp_points_in_warped_image, compute_tsp_with_convex_hull
 import time
+import config
+import sys
 
 # === CONFIG ===
-MOVING_ID = 10
 MAX_TRAIL = 1000
 VISIT_RADIUS = 50
+TSP_POINT_ERROR_RETRY_SECONDS = 5
+CORNERS_ERROR_RETRY_SECONDS = 5
 
 # UI constants
 VIDEO_W, VIDEO_H = 800, 600
@@ -25,14 +28,173 @@ BUTTON_COLOR = (180, 180, 180)
 BUTTON_COLOR_ACTIVE = (90, 180, 90)
 BUTTON_FONT_SIZE = 36
 INFO_FONT_SIZE = 32
+MENU_FONT_SIZE = 50
 
-# COLOR PREFERENCES
-PATH_COLOR = (0, 0, 255)             # Blue
-CLOSING_LINE_COLOR = (100, 200, 255) # Light Blue
-VISITED_PT_COLOR = (255, 0, 0)       # Red
-SOLUTION_COLOR = (0, 255, 0)         # Green
-SOLUTION_PT_COLOR = (255, 0, 0)      # Red
-ID10_COLOR = (255, 215, 0)           # Gold (for visibility)
+PATH_COLOR = (0, 0, 255)
+CLOSING_LINE_COLOR = (100, 200, 255)
+VISITED_PT_COLOR = (255, 0, 0)
+SOLUTION_COLOR = (0, 255, 0)
+SOLUTION_PT_COLOR = (255, 0, 0)
+ID10_COLOR = (255, 215, 0)
+
+# Store the current expected points in a global variable for runtime use
+CURRENT_EXPECTED_POINTS = config.EXPECTED_TSP_POINTS
+
+def show_wrapped_message(screen, message, font, color, bg, max_width, duration_ms=1000):
+    """Display a wrapped message in the center of the window for a set duration."""
+    screen.fill(bg)
+    lines = []
+    words = message.split(' ')
+    current_line = ""
+    for word in words:
+        test_line = current_line + (' ' if current_line else '') + word
+        test_surface = font.render(test_line, True, color)
+        if test_surface.get_width() <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+
+    total_height = sum(font.render(line, True, color).get_height() + 2 for line in lines)
+    y = (screen.get_height() - total_height) // 2
+    for line in lines:
+        line_surface = font.render(line, True, color)
+        x = (screen.get_width() - line_surface.get_width()) // 2
+        screen.blit(line_surface, (x, y))
+        y += line_surface.get_height() + 2
+
+    pygame.display.flip()
+    pygame.time.wait(duration_ms)
+
+def show_menu_and_get_expected_points():
+    global CURRENT_EXPECTED_POINTS
+    pygame.init()
+    screen = pygame.display.set_mode((600, 300))
+    pygame.display.set_caption("Startup Menu")
+    font = pygame.font.SysFont(None, MENU_FONT_SIZE)
+    small_font = pygame.font.SysFont(None, 28)
+    clock = pygame.time.Clock()
+
+    options = ["Use default configuration", "Use custom number of points"]
+    selected = 0
+    menu_active = True
+    custom_points = None
+    entering_number = False
+    input_number_str = ""
+    menu_start_time = time.time()
+    timeout = 10  # seconds
+
+    def draw_wrapped_text(text, font, color, x, y, max_width, surface):
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + (' ' if current_line else '') + word
+            test_surface = font.render(test_line, True, color)
+            if test_surface.get_width() <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+        for line in lines:
+            line_surface = font.render(line, True, color)
+            surface.blit(line_surface, (x, y))
+            y += line_surface.get_height() + 2
+        return y
+
+    while menu_active:
+        screen.fill((240, 240, 240))
+        elapsed = time.time() - menu_start_time
+        timeout_rem = timeout - int(elapsed)
+        if entering_number:
+            prompt = "Enter number of points (2-30): " + input_number_str
+            prompt_surface = font.render(prompt, True, (0, 0, 0))
+            screen.blit(prompt_surface, (50, 100))
+            info_surface = small_font.render("Press Enter to confirm. ESC to cancel.", True, (100, 100, 100))
+            screen.blit(info_surface, (50, 160))
+        else:
+            for i, option in enumerate(options):
+                color = (0, 0, 0)
+                bg = BUTTON_COLOR_ACTIVE if i == selected else BUTTON_COLOR
+                rect = pygame.Rect(50, 80 + i*70, 500, 60)
+                pygame.draw.rect(screen, bg, rect)
+                text = font.render(option, True, color)
+                screen.blit(text, (rect.x + 15, rect.y + 10))
+            # Timeout info (wrapped)
+            info = f"Auto-selecting default in {timeout_rem}s..." if timeout_rem > 0 else "Auto-selected default."
+            info_col = (100, 60, 60) if timeout_rem > 0 else (0, 120, 0)
+            draw_wrapped_text(info, small_font, info_col, 50, 30, 500, screen)
+
+        pygame.display.flip()
+        clock.tick(30)
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit(0)
+
+            if entering_number:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        entering_number = False
+                        input_number_str = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        input_number_str = input_number_str[:-1]
+                    elif event.key == pygame.K_RETURN:
+                        try:
+                            val = int(input_number_str)
+                            if 2 <= val <= 30:
+                                custom_points = val
+                                menu_active = False
+                                break
+                            else:
+                                input_number_str = ""
+                        except:
+                            input_number_str = ""
+                    elif event.unicode.isdigit():
+                        if len(input_number_str) < 2:
+                            input_number_str += event.unicode
+            else:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_DOWN:
+                        selected = (selected + 1) % len(options)
+                    elif event.key == pygame.K_UP:
+                        selected = (selected - 1) % len(options)
+                    elif event.key == pygame.K_RETURN:
+                        if selected == 0:
+                            menu_active = False
+                            break
+                        elif selected == 1:
+                            entering_number = True
+                            input_number_str = ""
+        if not entering_number and elapsed >= timeout:
+            # Timeout: select default automatically
+            selected = 0
+            menu_active = False
+            # Show auto-selected message for 1 second before starting, WRAPPED
+            show_wrapped_message(
+                screen,
+                "Default configuration selected automatically.",
+                font, (0, 120, 0), (240, 240, 240), 500, duration_ms=1000
+            )
+            break
+
+    # Set CURRENT_EXPECTED_POINTS
+    if custom_points:
+        CURRENT_EXPECTED_POINTS = custom_points
+    else:
+        CURRENT_EXPECTED_POINTS = config.EXPECTED_TSP_POINTS
+
+    pygame.display.quit()
+    pygame.quit()
+    return CURRENT_EXPECTED_POINTS
+
 
 class ArucoTracker:
     def __init__(self):
@@ -42,7 +204,9 @@ class ArucoTracker:
         self.current_frame = None
         self.frame_ready = False
 
+
         # For path tracking
+
         self.all_points = None
         self.visited_points = []
         self.path_complete = False
@@ -52,36 +216,62 @@ class ArucoTracker:
         self.optimal_path_ready = False
         self.pixels_per_meter = None
 
-        # For UI state
+
+        self.tsp_error_msg = ""
+        self.tsp_error_wait_until = 0
+        self.tsp_error_active = False
+
+        self.corners_error_msg = ""
+        self.corners_error_wait_until = 0
+        self.corners_error_active = False
+
+         # For UI state
         self.video_surf = None
-
-        # For corner detection waiting
-        self.waiting_for_corners = False
-        self.corner_retry_time = 0
-        self.corner_retry_countdown = 0
-
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
         pygame.display.set_caption("ArUco Tracker with UI")
         self.button_font = pygame.font.SysFont(None, BUTTON_FONT_SIZE)
         self.info_font = pygame.font.SysFont(None, INFO_FONT_SIZE)
-        self.clock = pygame.time.Clock()
 
+        self.error_font = pygame.font.SysFont(None, 48)
+        self.clock = pygame.time.Clock()
         # Define buttons (rects for mouse events)
+
         self.button_restart = pygame.Rect(VIDEO_W + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
         self.button_solution = pygame.Rect(self.button_restart.right + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
 
     def initialize_points_and_calibration(self, frame):
-        """Detect TSP points and calibrate pixels-to-meters using two corners."""
         marker_map, _ = detect_aruco_markers(frame)
         try:
-            # Try to get 4 unique corner IDs (commonly 1,2,3,4)
             required_ids = [1, 2, 3, 4]
             if not all(id_ in marker_map for id_ in required_ids):
-                raise Exception("Did not detect all 4 corners")
-            # Usual logic (keep as before)
-            self.all_points = detect_tsp_points_in_warped_image(frame, MOVING_ID)
+                self.corners_error_msg = "ERROR: Did not detect 4 corners."
+                self.corners_error_active = True
+                self.corners_error_wait_until = time.time() + CORNERS_ERROR_RETRY_SECONDS
+                return False
+            else:
+                self.corners_error_msg = ""
+                self.corners_error_active = False
+
+            self.all_points = detect_tsp_points_in_warped_image(frame, config.MOVING_ID)
             self.all_points = [tuple(map(int, pt)) for pt in self.all_points]
+
+            n = len(self.all_points)
+            if n < 2:
+                self.tsp_error_msg = "ERROR: Less than 2 TSP points detected!"
+                self.tsp_error_active = True
+                self.tsp_error_wait_until = time.time() + TSP_POINT_ERROR_RETRY_SECONDS
+                return False
+            elif n != CURRENT_EXPECTED_POINTS:
+                self.tsp_error_msg = f"ERROR: Detected {n} TSP points, expected {CURRENT_EXPECTED_POINTS}!"
+                self.tsp_error_active = True
+                self.tsp_error_wait_until = time.time() + TSP_POINT_ERROR_RETRY_SECONDS
+                return False
+            else:
+                self.tsp_error_msg = ""
+                self.tsp_error_active = False
+
+
             p1 = marker_map[1][0]
             p2 = marker_map[2][0]
             cx1, cy1 = int(np.mean(p1[:, 0])), int(np.mean(p1[:, 1]))
@@ -99,8 +289,8 @@ class ArucoTracker:
             return
 
         id10_pos = tuple(map(int, id10_pos))
-
         # If not all points visited, check for new visits
+
         if not self.returning_to_start:
             for pt in self.all_points:
                 if pt not in self.visited_points and np.linalg.norm(np.array(id10_pos) - np.array(pt)) < VISIT_RADIUS:
@@ -119,28 +309,19 @@ class ArucoTracker:
         if not self.visited_points:
             return
 
-        # Draw blue lines between visited points
         for i in range(1, len(self.visited_points)):
             pygame.draw.line(surf, PATH_COLOR, self.visited_points[i-1], self.visited_points[i], 4)
-
-        # Draw visited points as red circles
         for x, y in self.visited_points:
             pygame.draw.circle(surf, VISITED_PT_COLOR, (x, y), 8)
-
         if not self.path_complete:
             if len(self.visited_points) > 0 and id10_pos is not None:
-                # Draw blue line from last visited point to id10 (current position)
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], id10_pos, 4)
             if self.returning_to_start and not self.path_complete:
-                # Draw light blue line from id10 to first point
                 pygame.draw.line(surf, CLOSING_LINE_COLOR, id10_pos, self.visited_points[0], 4)
-            # Draw id10 marker
             pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
         else:
-            # When path is complete, draw closing segment (last point to first)
             if len(self.visited_points) > 1:
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], self.visited_points[0], 4)
-            # Do NOT draw id10 marker
 
     def draw_solution(self, surf):
         if not self.show_solution or not self.optimal_path_ready or not self.optimal_path:
@@ -153,6 +334,7 @@ class ArucoTracker:
         pygame.draw.line(surf, SOLUTION_COLOR,
                          tuple(map(int, self.optimal_path[-1])),
                          tuple(map(int, self.optimal_path[0])), 4)
+
         # Draw red points for TSP points
         for x, y in self.optimal_path:
             pygame.draw.circle(surf, SOLUTION_PT_COLOR, (int(x), int(y)), 8)
@@ -163,23 +345,28 @@ class ArucoTracker:
         total = 0.0
         for i in range(1, len(self.visited_points)):
             total += np.linalg.norm(np.array(self.visited_points[i]) - np.array(self.visited_points[i-1]))
+
+        if self.path_complete and len(self.visited_points) > 1:
+            total += np.linalg.norm(np.array(self.visited_points[0]) - np.array(self.visited_points[-1]))
         return total / self.pixels_per_meter
 
     def compute_optimal_path_distance(self):
-        """Compute the total length in meters of the optimal TSP path."""
+
         if not self.optimal_path or len(self.optimal_path) < 2 or not self.pixels_per_meter:
             return 0.0
         total = 0.0
         for i in range(1, len(self.optimal_path)):
             total += np.linalg.norm(np.array(self.optimal_path[i]) - np.array(self.optimal_path[i-1]))
         # Closing the loop:
+
         total += np.linalg.norm(np.array(self.optimal_path[0]) - np.array(self.optimal_path[-1]))
         return total / self.pixels_per_meter
 
     def capture_loop(self):
         picam2 = Picamera2()
-        config = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
-        picam2.configure(config)
+        config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
+        picam2.configure(config_cam)
+
         picam2.start()
         sleep(1)
         initialized_points = False
@@ -187,38 +374,66 @@ class ArucoTracker:
         try:
             while self.running:
                 frame = picam2.capture_array("main")
-
-                # Wait until 4 corners are detected
                 if not initialized_points:
-                    # Try detect
-                    if self.initialize_points_and_calibration(frame):
-                        if self.all_points:
-                            opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
-                            self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
-                            self.optimal_path_ready = True
-                        initialized_points = True
-                        self.waiting_for_corners = False
-                    else:
-                        # Start waiting logic if not already started
-                        if not self.waiting_for_corners:
-                            self.waiting_for_corners = True
-                            self.corner_retry_time = time.time() + 5
+                    now = time.time()
+                    if self.corners_error_active:
+                        if now >= self.corners_error_wait_until:
+                            if not self.initialize_points_and_calibration(frame):
+                                self.corners_error_wait_until = now + CORNERS_ERROR_RETRY_SECONDS
+                                with self.lock:
+                                    self.current_frame = frame.copy()
+                                    self.frame_ready = True
+                                sleep(0.1)
+                                continue
+                            else:
+                                self.corners_error_active = False
                         else:
-                            now = time.time()
-                            self.corner_retry_countdown = int(self.corner_retry_time - now)
-                            if self.corner_retry_countdown < 0:
-                                self.corner_retry_time = now + 5
-                        # Always update frame for UI
-                        with self.lock:
-                            self.current_frame = frame.copy()
-                            self.frame_ready = True
-                        sleep(0.1)
-                        continue
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
+                            sleep(0.1)
+                            continue
+                    elif self.tsp_error_active:
+                        if now >= self.tsp_error_wait_until:
+                            if not self.initialize_points_and_calibration(frame):
+                                self.tsp_error_wait_until = now + TSP_POINT_ERROR_RETRY_SECONDS
+                                with self.lock:
+                                    self.current_frame = frame.copy()
+                                    self.frame_ready = True
+                                sleep(0.1)
+                                continue
+                            else:
+                                self.tsp_error_active = False
+                                self.tsp_error_msg = ""
+                                if self.all_points:
+                                    opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
+                                    self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
+                                    self.optimal_path_ready = True
+                                initialized_points = True
+                        else:
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
+                            sleep(0.1)
+                            continue
+                    else:
+                        if self.initialize_points_and_calibration(frame):
+                            if self.all_points:
+                                opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
+                                self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
+                                self.optimal_path_ready = True
+                            initialized_points = True
+                        else:
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
+                            sleep(0.1)
+                            continue
 
                 marker_map, _ = detect_aruco_markers(frame)
                 id10_pos = None
-                if MOVING_ID in marker_map:
-                    pts = marker_map[MOVING_ID][0]
+                if config.MOVING_ID in marker_map:
+                    pts = marker_map[config.MOVING_ID][0]
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                     id10_pos = (cx, cy)
                     if not self.path_complete:
@@ -274,13 +489,54 @@ class ArucoTracker:
         pts_label = self.info_font.render(pts_str, True, (50, 50, 50))
         self.screen.blit(pts_label, (VIDEO_W + BUTTON_PAD, y))
         y += linespacing
-
-        # Only show optimal TSP path distance if solution is toggled on, and show it below 'Points Visited'
         if self.show_solution:
             opt_dist_m = self.compute_optimal_path_distance()
             opt_dist_str = f"Optimal Path: {opt_dist_m:.2f} m"
             opt_dist_label = self.info_font.render(opt_dist_str, True, (20, 100, 20))
             self.screen.blit(opt_dist_label, (VIDEO_W + BUTTON_PAD, y))
+            y += linespacing
+
+        def draw_wrapped_text(text, font, color, x, y, max_width):
+            words = text.split(' ')
+            lines = []
+            current_line = ""
+            for word in words:
+                test_line = current_line + (' ' if current_line else '') + word
+                test_surface = font.render(test_line, True, color)
+                if test_surface.get_width() <= max_width:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+            for line in lines:
+                line_surface = font.render(line, True, color)
+                self.screen.blit(line_surface, (x, y))
+                y += line_surface.get_height() + 2
+            return y
+
+        if self.tsp_error_msg and self.tsp_error_active:
+            timer_left = int(self.tsp_error_wait_until - time.time())
+            if timer_left < 0:
+                timer_left = 0
+            err_text = self.tsp_error_msg + f" | Retrying in {timer_left} seconds"
+            y = draw_wrapped_text(
+                err_text, self.error_font, (255, 0, 0),
+                VIDEO_W + BUTTON_PAD, y, WIN_W - VIDEO_W - 2 * BUTTON_PAD
+            )
+            y += linespacing
+
+        if self.corners_error_msg and self.corners_error_active:
+            timer_left = int(self.corners_error_wait_until - time.time())
+            if timer_left < 0:
+                timer_left = 0
+            err_text = self.corners_error_msg + f" | Retrying in {timer_left} seconds"
+            y = draw_wrapped_text(
+                err_text, self.error_font, (255, 0, 0),
+                VIDEO_W + BUTTON_PAD, y, WIN_W - VIDEO_W - 2 * BUTTON_PAD
+            )
             y += linespacing
 
     def display_loop(self):
@@ -314,20 +570,6 @@ class ArucoTracker:
 
             self.screen.fill((220, 220, 220))
 
-            # --- New: If waiting for corners, show message and countdown ---
-            if self.waiting_for_corners:
-                message = f"Did not detect 4 corners. Trying again in {max(0, self.corner_retry_countdown)} seconds"
-                font = pygame.font.SysFont(None, 60)
-                text = font.render(message, True, (200, 0, 0))
-                self.screen.blit(text, (
-                    WIN_W // 2 - text.get_width() // 2,
-                    WIN_H // 2 - text.get_height() // 2
-                ))
-                pygame.display.flip()
-                self.clock.tick(10)
-                continue
-
-            # --- Normal UI code below ---
             if self.video_surf:
                 self.screen.blit(self.video_surf, (0, 0))
 
@@ -356,6 +598,11 @@ class ArucoTracker:
         self.path_complete = False
         self.returning_to_start = False
         self.show_solution = False
+        self.tsp_error_msg = ""
+        self.tsp_error_active = False
+        self.corners_error_msg = ""
+        self.corners_error_active = False
+
 
     def run(self):
         print("Starting ArUco tracker with Pygame UI...")
@@ -371,5 +618,6 @@ class ArucoTracker:
         print("Tracker shutdown complete")
 
 if __name__ == "__main__":
+    show_menu_and_get_expected_points()
     tracker = ArucoTracker()
     tracker.run()

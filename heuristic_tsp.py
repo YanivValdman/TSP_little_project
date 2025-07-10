@@ -51,7 +51,7 @@ def compute_tsp_with_convex_hull(points):
 
 
 
-def detect_tsp_points_in_warped_image(warped_image):
+def detect_tsp_points_in_warped_image(warped_image, car_id):
     """
     Detect TSP points (non-corner markers) in the warped image.
 
@@ -67,7 +67,7 @@ def detect_tsp_points_in_warped_image(warped_image):
     corner_ids = [1, 2, 3, 4]
     tsp_points = []
     for id, corners in marker_map.items():
-        if id in corner_ids:
+        if id in corner_ids or id == car_id:
             continue  # Skip corner markers
 
         # Compute the center of the marker
@@ -81,9 +81,10 @@ def detect_tsp_points_in_warped_image(warped_image):
 
 # --- Main Execution ---
 def main():
+    car_id = 10
+    expected_points = 3
     image = capture_image()
     cv2.imwrite("raw.jpg", image)
-    expected_points = 3
     if image is None:
         print("Error loading image.")
         return
@@ -95,7 +96,7 @@ def main():
         warped = cv2.resize(image, (0, 0), fx = 0.7, fy = 0.7) #added by TOM
 
         # Step 2: Detect TSP points in the warped image
-        points = detect_tsp_points_in_warped_image(warped) 
+        points = detect_tsp_points_in_warped_image(warped, car_id) 
     except Exception as e:
         print("Error:", e)
         return
