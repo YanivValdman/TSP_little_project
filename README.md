@@ -19,6 +19,21 @@ This project is a **real-time TSP (Traveling Salesman Problem) solver and visual
 
 ---
 
+## ArUco Markers (aruco.pdf)
+
+The repository includes a file called `aruco.pdf`, which contains printable ArUco markers used for detection:
+
+- **Markers 1-4:**  
+  These should be printed and placed at the **corners** of the workspace. They are used to calibrate and warp the camera image so all detected points are mapped correctly.
+- **Marker 10:**  
+  This is used as the **default moving marker**. Attach this to the robot or moving object you want to track.
+- **Other Markers:**  
+  Additional ArUco markers from the PDF can be used as the TSP points (targets to visit).
+
+**Print `aruco.pdf` at high quality and cut out the markers you need for your setup.**
+
+---
+
 ## Quick Start
 
 ### **Requirements**
@@ -117,6 +132,9 @@ On launch, you'll see a menu:
   - `compute_tsp_with_convex_hull(points)`: Fast TSP approximation using convex hull insertion.
   - `detect_tsp_points_in_warped_image(warped_image, car_id)`: Finds all TSP target marker centers in the warped image.
 
+- **aruco.pdf**  
+  Printable ArUco markers for your experiment.
+
 ---
 
 ## Authors
@@ -129,6 +147,7 @@ On launch, you'll see a menu:
 ## License
 
 No license specified.  
+If you wish to open source this project, consider adding a license file (e.g., MIT, GPL, etc.).
 
 ---
 
@@ -139,8 +158,6 @@ No license specified.
 - Picamera2 (https://github.com/raspberrypi/picamera2)
 - SciPy and Matplotlib for TSP algorithms and plotting
 
----
-
 
 ## Project Structure
 
@@ -149,6 +166,7 @@ track_display_with_threads.py
 config.py
 utils.py
 heuristic_tsp.py
+aruco.pdf
 ...
 ```
 
