@@ -7,6 +7,7 @@ from collections import deque
 from picamera2 import Picamera2
 from utils import detect_aruco_markers
 from heuristic_tsp import detect_tsp_points_in_warped_image, compute_tsp_with_convex_hull
+import time
 
 # === CONFIG ===
 MOVING_ID = 10
@@ -54,6 +55,11 @@ class ArucoTracker:
         # For UI state
         self.video_surf = None
 
+        # For corner detection waiting
+        self.waiting_for_corners = False
+        self.corner_retry_time = 0
+        self.corner_retry_countdown = 0
+
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
         pygame.display.set_caption("ArUco Tracker with UI")
@@ -66,19 +72,27 @@ class ArucoTracker:
         self.button_solution = pygame.Rect(self.button_restart.right + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
 
     def initialize_points_and_calibration(self, frame):
-        self.all_points = detect_tsp_points_in_warped_image(frame, MOVING_ID)
-        self.all_points = [tuple(map(int, pt)) for pt in self.all_points]
+        """Detect TSP points and calibrate pixels-to-meters using two corners."""
         marker_map, _ = detect_aruco_markers(frame)
         try:
+            # Try to get 4 unique corner IDs (commonly 1,2,3,4)
+            required_ids = [1, 2, 3, 4]
+            if not all(id_ in marker_map for id_ in required_ids):
+                raise Exception("Did not detect all 4 corners")
+            # Usual logic (keep as before)
+            self.all_points = detect_tsp_points_in_warped_image(frame, MOVING_ID)
+            self.all_points = [tuple(map(int, pt)) for pt in self.all_points]
             p1 = marker_map[1][0]
             p2 = marker_map[2][0]
             cx1, cy1 = int(np.mean(p1[:, 0])), int(np.mean(p1[:, 1]))
             cx2, cy2 = int(np.mean(p2[:, 0])), int(np.mean(p2[:, 1]))
             pixel_dist = np.linalg.norm(np.array([cx1, cy1]) - np.array([cx2, cy2]))
             self.pixels_per_meter = pixel_dist / 1.3
+            return True
         except Exception as e:
             self.pixels_per_meter = 1.0
             print("Calibration failed:", e)
+            return False
 
     def update_path_logic(self, id10_pos):
         if self.path_complete or self.all_points is None or len(self.all_points) == 0:
@@ -173,16 +187,35 @@ class ArucoTracker:
         try:
             while self.running:
                 frame = picam2.capture_array("main")
-                marker_map, _ = detect_aruco_markers(frame)
 
+                # Wait until 4 corners are detected
                 if not initialized_points:
-                    self.initialize_points_and_calibration(frame)
-                    if self.all_points:
-                        opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
-                        self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
-                        self.optimal_path_ready = True
-                    initialized_points = True
+                    # Try detect
+                    if self.initialize_points_and_calibration(frame):
+                        if self.all_points:
+                            opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
+                            self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
+                            self.optimal_path_ready = True
+                        initialized_points = True
+                        self.waiting_for_corners = False
+                    else:
+                        # Start waiting logic if not already started
+                        if not self.waiting_for_corners:
+                            self.waiting_for_corners = True
+                            self.corner_retry_time = time.time() + 5
+                        else:
+                            now = time.time()
+                            self.corner_retry_countdown = int(self.corner_retry_time - now)
+                            if self.corner_retry_countdown < 0:
+                                self.corner_retry_time = now + 5
+                        # Always update frame for UI
+                        with self.lock:
+                            self.current_frame = frame.copy()
+                            self.frame_ready = True
+                        sleep(0.1)
+                        continue
 
+                marker_map, _ = detect_aruco_markers(frame)
                 id10_pos = None
                 if MOVING_ID in marker_map:
                     pts = marker_map[MOVING_ID][0]
@@ -281,6 +314,20 @@ class ArucoTracker:
 
             self.screen.fill((220, 220, 220))
 
+            # --- New: If waiting for corners, show message and countdown ---
+            if self.waiting_for_corners:
+                message = f"Did not detect 4 corners. Trying again in {max(0, self.corner_retry_countdown)} seconds"
+                font = pygame.font.SysFont(None, 60)
+                text = font.render(message, True, (200, 0, 0))
+                self.screen.blit(text, (
+                    WIN_W // 2 - text.get_width() // 2,
+                    WIN_H // 2 - text.get_height() // 2
+                ))
+                pygame.display.flip()
+                self.clock.tick(10)
+                continue
+
+            # --- Normal UI code below ---
             if self.video_surf:
                 self.screen.blit(self.video_surf, (0, 0))
 
