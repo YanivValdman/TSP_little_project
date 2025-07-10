@@ -9,6 +9,7 @@ from utils import detect_aruco_markers
 from heuristic_tsp import detect_tsp_points_in_warped_image, compute_tsp_with_convex_hull
 import time
 import config
+import sys
 
 # === CONFIG ===
 MAX_TRAIL = 1000
@@ -27,6 +28,7 @@ BUTTON_COLOR = (180, 180, 180)
 BUTTON_COLOR_ACTIVE = (90, 180, 90)
 BUTTON_FONT_SIZE = 36
 INFO_FONT_SIZE = 32
+MENU_FONT_SIZE = 50
 
 PATH_COLOR = (0, 0, 255)
 CLOSING_LINE_COLOR = (100, 200, 255)
@@ -34,6 +36,164 @@ VISITED_PT_COLOR = (255, 0, 0)
 SOLUTION_COLOR = (0, 255, 0)
 SOLUTION_PT_COLOR = (255, 0, 0)
 ID10_COLOR = (255, 215, 0)
+
+# Store the current expected points in a global variable for runtime use
+CURRENT_EXPECTED_POINTS = config.EXPECTED_TSP_POINTS
+
+def show_wrapped_message(screen, message, font, color, bg, max_width, duration_ms=1000):
+    """Display a wrapped message in the center of the window for a set duration."""
+    screen.fill(bg)
+    lines = []
+    words = message.split(' ')
+    current_line = ""
+    for word in words:
+        test_line = current_line + (' ' if current_line else '') + word
+        test_surface = font.render(test_line, True, color)
+        if test_surface.get_width() <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+
+    total_height = sum(font.render(line, True, color).get_height() + 2 for line in lines)
+    y = (screen.get_height() - total_height) // 2
+    for line in lines:
+        line_surface = font.render(line, True, color)
+        x = (screen.get_width() - line_surface.get_width()) // 2
+        screen.blit(line_surface, (x, y))
+        y += line_surface.get_height() + 2
+
+    pygame.display.flip()
+    pygame.time.wait(duration_ms)
+
+def show_menu_and_get_expected_points():
+    global CURRENT_EXPECTED_POINTS
+    pygame.init()
+    screen = pygame.display.set_mode((600, 300))
+    pygame.display.set_caption("Startup Menu")
+    font = pygame.font.SysFont(None, MENU_FONT_SIZE)
+    small_font = pygame.font.SysFont(None, 28)
+    clock = pygame.time.Clock()
+
+    options = ["Use default configuration", "Use custom number of points"]
+    selected = 0
+    menu_active = True
+    custom_points = None
+    entering_number = False
+    input_number_str = ""
+    menu_start_time = time.time()
+    timeout = 10  # seconds
+
+    def draw_wrapped_text(text, font, color, x, y, max_width, surface):
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+        for word in words:
+            test_line = current_line + (' ' if current_line else '') + word
+            test_surface = font.render(test_line, True, color)
+            if test_surface.get_width() <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+        for line in lines:
+            line_surface = font.render(line, True, color)
+            surface.blit(line_surface, (x, y))
+            y += line_surface.get_height() + 2
+        return y
+
+    while menu_active:
+        screen.fill((240, 240, 240))
+        elapsed = time.time() - menu_start_time
+        timeout_rem = timeout - int(elapsed)
+        if entering_number:
+            prompt = "Enter number of points (2-30): " + input_number_str
+            prompt_surface = font.render(prompt, True, (0, 0, 0))
+            screen.blit(prompt_surface, (50, 100))
+            info_surface = small_font.render("Press Enter to confirm. ESC to cancel.", True, (100, 100, 100))
+            screen.blit(info_surface, (50, 160))
+        else:
+            for i, option in enumerate(options):
+                color = (0, 0, 0)
+                bg = BUTTON_COLOR_ACTIVE if i == selected else BUTTON_COLOR
+                rect = pygame.Rect(50, 80 + i*70, 500, 60)
+                pygame.draw.rect(screen, bg, rect)
+                text = font.render(option, True, color)
+                screen.blit(text, (rect.x + 15, rect.y + 10))
+            # Timeout info (wrapped)
+            info = f"Auto-selecting default in {timeout_rem}s..." if timeout_rem > 0 else "Auto-selected default."
+            info_col = (100, 60, 60) if timeout_rem > 0 else (0, 120, 0)
+            draw_wrapped_text(info, small_font, info_col, 50, 30, 500, screen)
+
+        pygame.display.flip()
+        clock.tick(30)
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit(0)
+
+            if entering_number:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        entering_number = False
+                        input_number_str = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        input_number_str = input_number_str[:-1]
+                    elif event.key == pygame.K_RETURN:
+                        try:
+                            val = int(input_number_str)
+                            if 2 <= val <= 30:
+                                custom_points = val
+                                menu_active = False
+                                break
+                            else:
+                                input_number_str = ""
+                        except:
+                            input_number_str = ""
+                    elif event.unicode.isdigit():
+                        if len(input_number_str) < 2:
+                            input_number_str += event.unicode
+            else:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_DOWN:
+                        selected = (selected + 1) % len(options)
+                    elif event.key == pygame.K_UP:
+                        selected = (selected - 1) % len(options)
+                    elif event.key == pygame.K_RETURN:
+                        if selected == 0:
+                            menu_active = False
+                            break
+                        elif selected == 1:
+                            entering_number = True
+                            input_number_str = ""
+        if not entering_number and elapsed >= timeout:
+            # Timeout: select default automatically
+            selected = 0
+            menu_active = False
+            # Show auto-selected message for 1 second before starting, WRAPPED
+            show_wrapped_message(
+                screen,
+                "Default configuration selected automatically.",
+                font, (0, 120, 0), (240, 240, 240), 500, duration_ms=1000
+            )
+            break
+
+    # Set CURRENT_EXPECTED_POINTS
+    if custom_points:
+        CURRENT_EXPECTED_POINTS = custom_points
+    else:
+        CURRENT_EXPECTED_POINTS = config.EXPECTED_TSP_POINTS
+
+    pygame.display.quit()
+    pygame.quit()
+    return CURRENT_EXPECTED_POINTS
 
 class ArucoTracker:
     def __init__(self):
@@ -95,8 +255,8 @@ class ArucoTracker:
                 self.tsp_error_active = True
                 self.tsp_error_wait_until = time.time() + TSP_POINT_ERROR_RETRY_SECONDS
                 return False
-            elif n != config.EXPECTED_TSP_POINTS:
-                self.tsp_error_msg = f"ERROR: Detected {n} TSP points, expected {config.EXPECTED_TSP_POINTS}!"
+            elif n != CURRENT_EXPECTED_POINTS:
+                self.tsp_error_msg = f"ERROR: Detected {n} TSP points, expected {CURRENT_EXPECTED_POINTS}!"
                 self.tsp_error_active = True
                 self.tsp_error_wait_until = time.time() + TSP_POINT_ERROR_RETRY_SECONDS
                 return False
@@ -171,7 +331,6 @@ class ArucoTracker:
         total = 0.0
         for i in range(1, len(self.visited_points)):
             total += np.linalg.norm(np.array(self.visited_points[i]) - np.array(self.visited_points[i-1]))
-        # Add closing segment if path is complete (i.e., returned to start)
         if self.path_complete and len(self.visited_points) > 1:
             total += np.linalg.norm(np.array(self.visited_points[0]) - np.array(self.visited_points[-1]))
         return total / self.pixels_per_meter
@@ -440,5 +599,6 @@ class ArucoTracker:
         print("Tracker shutdown complete")
 
 if __name__ == "__main__":
+    show_menu_and_get_expected_points()
     tracker = ArucoTracker()
     tracker.run()
