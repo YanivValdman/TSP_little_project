@@ -129,7 +129,6 @@ On launch, you'll see a menu:
 ## License
 
 No license specified.  
-If you wish to open source this project, consider adding a license file (e.g., MIT, GPL, etc.).
 
 ---
 
@@ -142,13 +141,6 @@ If you wish to open source this project, consider adding a license file (e.g., M
 
 ---
 
-## Troubleshooting
-
-- **Camera/Markers Not Detected:** Ensure all markers are visible and properly placed.
-- **Not Enough Points Detected:** Adjust `EXPECTED_TSP_POINTS` in `config.py` or select a custom number at startup.
-- **Display Issues:** Make sure Pygame can open a display (may require running from the desktop environment).
-
----
 
 ## Project Structure
 
