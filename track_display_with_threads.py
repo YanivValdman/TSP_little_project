@@ -171,6 +171,9 @@ class ArucoTracker:
         total = 0.0
         for i in range(1, len(self.visited_points)):
             total += np.linalg.norm(np.array(self.visited_points[i]) - np.array(self.visited_points[i-1]))
+        # Add closing segment if path is complete (i.e., returned to start)
+        if self.path_complete and len(self.visited_points) > 1:
+            total += np.linalg.norm(np.array(self.visited_points[0]) - np.array(self.visited_points[-1]))
         return total / self.pixels_per_meter
 
     def compute_optimal_path_distance(self):
@@ -317,7 +320,6 @@ class ArucoTracker:
             self.screen.blit(opt_dist_label, (VIDEO_W + BUTTON_PAD, y))
             y += linespacing
 
-        # --- WRAPPED ERROR MESSAGE DISPLAY ---
         def draw_wrapped_text(text, font, color, x, y, max_width):
             words = text.split(' ')
             lines = []
@@ -339,7 +341,6 @@ class ArucoTracker:
                 y += line_surface.get_height() + 2
             return y
 
-        # Show TSP error with timer if active
         if self.tsp_error_msg and self.tsp_error_active:
             timer_left = int(self.tsp_error_wait_until - time.time())
             if timer_left < 0:
@@ -351,7 +352,6 @@ class ArucoTracker:
             )
             y += linespacing
 
-        # Show corners error with timer if active
         if self.corners_error_msg and self.corners_error_active:
             timer_left = int(self.corners_error_wait_until - time.time())
             if timer_left < 0:
