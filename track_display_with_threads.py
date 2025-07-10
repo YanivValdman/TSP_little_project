@@ -195,6 +195,7 @@ def show_menu_and_get_expected_points():
     pygame.quit()
     return CURRENT_EXPECTED_POINTS
 
+
 class ArucoTracker:
     def __init__(self):
         self.running = True
@@ -202,6 +203,9 @@ class ArucoTracker:
         self.lock = threading.Lock()
         self.current_frame = None
         self.frame_ready = False
+
+
+        # For path tracking
 
         self.all_points = None
         self.visited_points = []
@@ -212,6 +216,7 @@ class ArucoTracker:
         self.optimal_path_ready = False
         self.pixels_per_meter = None
 
+
         self.tsp_error_msg = ""
         self.tsp_error_wait_until = 0
         self.tsp_error_active = False
@@ -220,15 +225,17 @@ class ArucoTracker:
         self.corners_error_wait_until = 0
         self.corners_error_active = False
 
+         # For UI state
         self.video_surf = None
-
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
         pygame.display.set_caption("ArUco Tracker with UI")
         self.button_font = pygame.font.SysFont(None, BUTTON_FONT_SIZE)
         self.info_font = pygame.font.SysFont(None, INFO_FONT_SIZE)
+
         self.error_font = pygame.font.SysFont(None, 48)
         self.clock = pygame.time.Clock()
+        # Define buttons (rects for mouse events)
 
         self.button_restart = pygame.Rect(VIDEO_W + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
         self.button_solution = pygame.Rect(self.button_restart.right + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
@@ -264,6 +271,7 @@ class ArucoTracker:
                 self.tsp_error_msg = ""
                 self.tsp_error_active = False
 
+
             p1 = marker_map[1][0]
             p2 = marker_map[2][0]
             cx1, cy1 = int(np.mean(p1[:, 0])), int(np.mean(p1[:, 1]))
@@ -281,6 +289,7 @@ class ArucoTracker:
             return
 
         id10_pos = tuple(map(int, id10_pos))
+        # If not all points visited, check for new visits
 
         if not self.returning_to_start:
             for pt in self.all_points:
@@ -289,6 +298,7 @@ class ArucoTracker:
             if len(self.visited_points) == len(self.all_points):
                 self.returning_to_start = True
 
+        # If all points visited, check if we've returned to the first point
         if self.returning_to_start and len(self.visited_points) > 0:
             first_pt = np.array(self.visited_points[0])
             if np.linalg.norm(np.array(id10_pos) - first_pt) < VISIT_RADIUS:
@@ -298,6 +308,7 @@ class ArucoTracker:
     def draw_path(self, surf, id10_pos):
         if not self.visited_points:
             return
+
         for i in range(1, len(self.visited_points)):
             pygame.draw.line(surf, PATH_COLOR, self.visited_points[i-1], self.visited_points[i], 4)
         for x, y in self.visited_points:
@@ -315,6 +326,7 @@ class ArucoTracker:
     def draw_solution(self, surf):
         if not self.show_solution or not self.optimal_path_ready or not self.optimal_path:
             return
+        # Draw green lines for solution path
         for i in range(1, len(self.optimal_path)):
             pygame.draw.line(surf, SOLUTION_COLOR,
                              tuple(map(int, self.optimal_path[i-1])),
@@ -322,6 +334,8 @@ class ArucoTracker:
         pygame.draw.line(surf, SOLUTION_COLOR,
                          tuple(map(int, self.optimal_path[-1])),
                          tuple(map(int, self.optimal_path[0])), 4)
+
+        # Draw red points for TSP points
         for x, y in self.optimal_path:
             pygame.draw.circle(surf, SOLUTION_PT_COLOR, (int(x), int(y)), 8)
 
@@ -331,16 +345,20 @@ class ArucoTracker:
         total = 0.0
         for i in range(1, len(self.visited_points)):
             total += np.linalg.norm(np.array(self.visited_points[i]) - np.array(self.visited_points[i-1]))
+
         if self.path_complete and len(self.visited_points) > 1:
             total += np.linalg.norm(np.array(self.visited_points[0]) - np.array(self.visited_points[-1]))
         return total / self.pixels_per_meter
 
     def compute_optimal_path_distance(self):
+
         if not self.optimal_path or len(self.optimal_path) < 2 or not self.pixels_per_meter:
             return 0.0
         total = 0.0
         for i in range(1, len(self.optimal_path)):
             total += np.linalg.norm(np.array(self.optimal_path[i]) - np.array(self.optimal_path[i-1]))
+        # Closing the loop:
+
         total += np.linalg.norm(np.array(self.optimal_path[0]) - np.array(self.optimal_path[-1]))
         return total / self.pixels_per_meter
 
@@ -348,6 +366,7 @@ class ArucoTracker:
         picam2 = Picamera2()
         config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
         picam2.configure(config_cam)
+
         picam2.start()
         sleep(1)
         initialized_points = False
@@ -355,7 +374,6 @@ class ArucoTracker:
         try:
             while self.running:
                 frame = picam2.capture_array("main")
-
                 if not initialized_points:
                     now = time.time()
                     if self.corners_error_active:
@@ -471,7 +489,6 @@ class ArucoTracker:
         pts_label = self.info_font.render(pts_str, True, (50, 50, 50))
         self.screen.blit(pts_label, (VIDEO_W + BUTTON_PAD, y))
         y += linespacing
-
         if self.show_solution:
             opt_dist_m = self.compute_optimal_path_distance()
             opt_dist_str = f"Optimal Path: {opt_dist_m:.2f} m"
@@ -555,6 +572,7 @@ class ArucoTracker:
 
             if self.video_surf:
                 self.screen.blit(self.video_surf, (0, 0))
+
                 overlay = pygame.Surface((VIDEO_W, VIDEO_H), pygame.SRCALPHA)
                 if self.visited_points and self.trail:
                     self.draw_path(
@@ -584,6 +602,7 @@ class ArucoTracker:
         self.tsp_error_active = False
         self.corners_error_msg = ""
         self.corners_error_active = False
+
 
     def run(self):
         print("Starting ArUco tracker with Pygame UI...")
