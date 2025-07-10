@@ -19,7 +19,7 @@ class ArucoTracker:
         self.current_frame = None
         self.frame_ready = False
         
-        # Initialize pygame (instead of OpenCV GUI)
+        # Initialize pygame
         pygame.init()
         self.screen = pygame.display.set_mode((800, 600))
         pygame.display.set_caption("ArUco Tracker")
