@@ -316,9 +316,10 @@ class ArucoTracker:
         if not self.path_complete:
             if len(self.visited_points) > 0 and id10_pos is not None:
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], id10_pos, 4)
-            if self.returning_to_start and not self.path_complete:
+            if self.returning_to_start and not self.path_complete and id10_pos is not None:
                 pygame.draw.line(surf, CLOSING_LINE_COLOR, id10_pos, self.visited_points[0], 4)
-            pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
+            if id10_pos is not None:
+                pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
         else:
             if len(self.visited_points) > 1:
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], self.visited_points[0], 4)
@@ -574,11 +575,21 @@ class ArucoTracker:
                 self.screen.blit(self.video_surf, (0, 0))
 
                 overlay = pygame.Surface((VIDEO_W, VIDEO_H), pygame.SRCALPHA)
-                if self.visited_points and self.trail:
-                    self.draw_path(
-                        overlay,
-                        self.trail[-1] if self.trail else self.visited_points[-1]
-                    )
+                if self.visited_points:
+                    # Safely determine the current position for drawing
+                    current_pos = None
+                    try:
+                        if self.trail:
+                            current_pos = self.trail[-1]
+                    except IndexError:
+                        # Race condition: trail became empty between check and access
+                        pass
+                    
+                    if current_pos is None and len(self.visited_points) > 0:
+                        current_pos = self.visited_points[-1]
+                    
+                    if current_pos is not None:
+                        self.draw_path(overlay, current_pos)
                 self.draw_solution(overlay)
                 self.screen.blit(overlay, (0, 0))
 
