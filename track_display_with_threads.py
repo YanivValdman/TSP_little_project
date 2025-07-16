@@ -126,6 +126,10 @@ def show_menu_and_get_expected_points():
                 pygame.draw.rect(screen, bg, rect)
                 text = font.render(option, True, color)
                 screen.blit(text, (rect.x + 15, rect.y + 10))
+            # Instructions for selection
+            instruction_text = "Use UP/DOWN arrows to select, then press ENTER."
+            instruction_surf = small_font.render(instruction_text, True, (80, 80, 80))
+            screen.blit(instruction_surf, (50, 220))
             # Timeout info (wrapped)
             info = f"Auto-selecting default in {timeout_rem}s..." if timeout_rem > 0 else "Auto-selected default."
             info_col = (100, 60, 60) if timeout_rem > 0 else (0, 120, 0)
