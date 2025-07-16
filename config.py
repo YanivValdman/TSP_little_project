@@ -4,4 +4,4 @@
 MOVING_ID = 10
 
 # The expected number of TSP points (targets to visit)
-EXPECTED_TSP_POINTS = 5  # Change this to desired setup
+EXPECTED_TSP_POINTS = 5  # Change this to your setup
