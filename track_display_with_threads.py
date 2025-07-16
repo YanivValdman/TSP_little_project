@@ -4,7 +4,6 @@ import pygame
 from time import sleep
 import threading
 from collections import deque
-import queue
 from picamera2 import Picamera2
 from utils import detect_aruco_markers
 from heuristic_tsp import detect_tsp_points_in_warped_image, compute_tsp_with_convex_hull
@@ -201,15 +200,9 @@ class ArucoTracker:
     def __init__(self):
         self.running = True
         self.trail = deque(maxlen=MAX_TRAIL)
-        
-        # Replace shared variables with thread-safe queues
-        self.frame_queue = queue.Queue(maxsize=2)  # Limit queue size to prevent memory buildup
-        self.trail_update_queue = queue.Queue()    # For trail updates from capture thread
-        self.restart_queue = queue.Queue()         # For restart commands
-        
-        # Thread-safe lock for trail access (still needed for trail manipulation)
-        self.trail_lock = threading.Lock()
-        
+        self.lock = threading.Lock()
+        self.current_frame = None
+        self.frame_ready = False
         self.picam2 = None  # Camera will be initialized in main thread
 
 
@@ -314,108 +307,36 @@ class ArucoTracker:
                 self.show_solution = True
 
     def draw_path(self, surf, id10_pos):
-        if not self.visited_points or surf is None:
+        if not self.visited_points:
             return
-        
-        # Additional safety checks to prevent buffer overflows
-        if len(self.visited_points) == 0:
-            return
-            
-        try:
-            # Draw path lines between visited points with bounds checking
-            for i in range(1, len(self.visited_points)):
-                if i < len(self.visited_points) and (i-1) >= 0:
-                    pt1 = self.visited_points[i-1]
-                    pt2 = self.visited_points[i]
-                    # Validate points are within reasonable bounds
-                    if (isinstance(pt1, (tuple, list)) and len(pt1) >= 2 and
-                        isinstance(pt2, (tuple, list)) and len(pt2) >= 2 and
-                        0 <= pt1[0] <= VIDEO_W and 0 <= pt1[1] <= VIDEO_H and
-                        0 <= pt2[0] <= VIDEO_W and 0 <= pt2[1] <= VIDEO_H):
-                        pygame.draw.line(surf, PATH_COLOR, pt1, pt2, 4)
-                        
-            # Draw visited point circles with bounds checking
-            for pt in self.visited_points:
-                if (isinstance(pt, (tuple, list)) and len(pt) >= 2 and
-                    0 <= pt[0] <= VIDEO_W and 0 <= pt[1] <= VIDEO_H):
-                    pygame.draw.circle(surf, VISITED_PT_COLOR, (int(pt[0]), int(pt[1])), 8)
-                    
-            # Draw current path and id10 marker
-            if not self.path_complete:
-                if (len(self.visited_points) > 0 and id10_pos is not None and
-                    isinstance(id10_pos, (tuple, list)) and len(id10_pos) >= 2 and
-                    0 <= id10_pos[0] <= VIDEO_W and 0 <= id10_pos[1] <= VIDEO_H):
-                    
-                    last_pt = self.visited_points[-1]
-                    if (isinstance(last_pt, (tuple, list)) and len(last_pt) >= 2 and
-                        0 <= last_pt[0] <= VIDEO_W and 0 <= last_pt[1] <= VIDEO_H):
-                        pygame.draw.line(surf, PATH_COLOR, last_pt, id10_pos, 4)
-                    
-                    if self.returning_to_start and len(self.visited_points) > 0:
-                        first_pt = self.visited_points[0]
-                        if (isinstance(first_pt, (tuple, list)) and len(first_pt) >= 2 and
-                            0 <= first_pt[0] <= VIDEO_W and 0 <= first_pt[1] <= VIDEO_H):
-                            pygame.draw.line(surf, CLOSING_LINE_COLOR, id10_pos, first_pt, 4)
-                    
-                    pygame.draw.circle(surf, ID10_COLOR, (int(id10_pos[0]), int(id10_pos[1])), 12)
-            else:
-                # Draw closing line for completed path
-                if len(self.visited_points) > 1:
-                    last_pt = self.visited_points[-1]
-                    first_pt = self.visited_points[0]
-                    if (isinstance(last_pt, (tuple, list)) and len(last_pt) >= 2 and
-                        isinstance(first_pt, (tuple, list)) and len(first_pt) >= 2 and
-                        0 <= last_pt[0] <= VIDEO_W and 0 <= last_pt[1] <= VIDEO_H and
-                        0 <= first_pt[0] <= VIDEO_W and 0 <= first_pt[1] <= VIDEO_H):
-                        pygame.draw.line(surf, PATH_COLOR, last_pt, first_pt, 4)
-                        
-        except (IndexError, TypeError, ValueError) as e:
-            print(f"Draw path error (safely handled): {e}")
-            # Continue without drawing rather than crashing
+
+        for i in range(1, len(self.visited_points)):
+            pygame.draw.line(surf, PATH_COLOR, self.visited_points[i-1], self.visited_points[i], 4)
+        for x, y in self.visited_points:
+            pygame.draw.circle(surf, VISITED_PT_COLOR, (x, y), 8)
+        if not self.path_complete:
+            if len(self.visited_points) > 0 and id10_pos is not None:
+                pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], id10_pos, 4)
+            if self.returning_to_start and not self.path_complete:
+                pygame.draw.line(surf, CLOSING_LINE_COLOR, id10_pos, self.visited_points[0], 4)
+            pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
+        else:
+            if len(self.visited_points) > 1:
+                pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], self.visited_points[0], 4)
 
     def draw_solution(self, surf):
-        if not self.show_solution or not self.optimal_path_ready or not self.optimal_path or surf is None:
+        if not self.show_solution or not self.optimal_path_ready or not self.optimal_path:
             return
-            
-        try:
-            # Draw green lines for solution path with bounds checking
-            for i in range(1, len(self.optimal_path)):
-                if i < len(self.optimal_path) and (i-1) >= 0:
-                    pt1 = self.optimal_path[i-1]
-                    pt2 = self.optimal_path[i]
-                    if (isinstance(pt1, (tuple, list)) and len(pt1) >= 2 and
-                        isinstance(pt2, (tuple, list)) and len(pt2) >= 2 and
-                        0 <= pt1[0] <= VIDEO_W and 0 <= pt1[1] <= VIDEO_H and
-                        0 <= pt2[0] <= VIDEO_W and 0 <= pt2[1] <= VIDEO_H):
-                        pygame.draw.line(surf, SOLUTION_COLOR,
-                                         tuple(map(int, pt1)),
-                                         tuple(map(int, pt2)), 4)
-                                         
-            # Draw closing line with bounds checking
-            if len(self.optimal_path) > 1:
-                last_pt = self.optimal_path[-1]
-                first_pt = self.optimal_path[0]
-                if (isinstance(last_pt, (tuple, list)) and len(last_pt) >= 2 and
-                    isinstance(first_pt, (tuple, list)) and len(first_pt) >= 2 and
-                    0 <= last_pt[0] <= VIDEO_W and 0 <= last_pt[1] <= VIDEO_H and
-                    0 <= first_pt[0] <= VIDEO_W and 0 <= first_pt[1] <= VIDEO_H):
-                    pygame.draw.line(surf, SOLUTION_COLOR,
-                                     tuple(map(int, last_pt)),
-                                     tuple(map(int, first_pt)), 4)
+        # Draw green lines for solution path
+        for i in range(1, len(self.optimal_path)):
+            pygame.draw.line(surf, SOLUTION_COLOR,
+                             tuple(map(int, self.optimal_path[i-1])),
+                             tuple(map(int, self.optimal_path[i])), 4)
+        pygame.draw.line(surf, SOLUTION_COLOR,
+                         tuple(map(int, self.optimal_path[-1])),
+                         tuple(map(int, self.optimal_path[0])), 4)
 
-        except (IndexError, TypeError, ValueError) as e:
-            print(f"Draw solution error (safely handled): {e}")
-            # Continue without drawing rather than crashing
-
-        # Draw red points for TSP points with bounds checking
-        if self.all_points:
-            try:
-                for pt in self.all_points:
-                    if (isinstance(pt, (tuple, list)) and len(pt) >= 2 and
-                        0 <= pt[0] <= VIDEO_W and 0 <= pt[1] <= VIDEO_H):
-                        pygame.draw.circle(surf, SOLUTION_PT_COLOR, tuple(map(int, pt)), 6)
-            except (IndexError, TypeError, ValueError) as e:
-                print(f"Draw solution points error (safely handled): {e}")
+        # Draw red points for TSP points
         for x, y in self.optimal_path:
             pygame.draw.circle(surf, SOLUTION_PT_COLOR, (int(x), int(y)), 8)
 
@@ -448,84 +369,37 @@ class ArucoTracker:
             self.running = False
             return
         
-        # Add sleep after thread start to mimic gdb behavior
-        sleep(0.2)
-        print("Capture thread started with safety delay")
-        
         initialized_points = False
 
         try:
             while self.running:
-                # Check for restart commands from main thread
-                try:
-                    restart_cmd = self.restart_queue.get_nowait()
-                    if restart_cmd:
-                        print("Restart command received in capture thread")
-                        initialized_points = False
-                        # Clear trail safely
-                        with self.trail_lock:
-                            self.trail.clear()
-                except queue.Empty:
-                    pass
-                
-                # Capture frame with proper error handling
-                try:
-                    frame = self.picam2.capture_array("main")
-                    if frame is None:
-                        print("Warning: Received null frame from camera")
-                        sleep(0.1)
-                        continue
-                    
-                    # Create defensive copy to prevent use-after-free
-                    frame_copy = frame.copy()
-                except Exception as e:
-                    print(f"Error capturing frame: {e}")
-                    sleep(0.1)
-                    continue
-                
+                frame = self.picam2.capture_array("main")
                 if not initialized_points:
                     now = time.time()
                     if self.corners_error_active:
                         if now >= self.corners_error_wait_until:
-                            if not self.initialize_points_and_calibration(frame_copy):
+                            if not self.initialize_points_and_calibration(frame):
                                 self.corners_error_wait_until = now + CORNERS_ERROR_RETRY_SECONDS
-                                # Send frame to main thread via queue
-                                try:
-                                    self.frame_queue.put(frame_copy, block=False)
-                                except queue.Full:
-                                    # If queue is full, remove old frame and add new one
-                                    try:
-                                        self.frame_queue.get_nowait()
-                                        self.frame_queue.put(frame_copy, block=False)
-                                    except queue.Empty:
-                                        pass
+                                with self.lock:
+                                    self.current_frame = frame.copy()
+                                    self.frame_ready = True
                                 sleep(0.1)
                                 continue
                             else:
                                 self.corners_error_active = False
                         else:
-                            try:
-                                self.frame_queue.put(frame_copy, block=False)
-                            except queue.Full:
-                                try:
-                                    self.frame_queue.get_nowait()
-                                    self.frame_queue.put(frame_copy, block=False)
-                                except queue.Empty:
-                                    pass
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
                             sleep(0.1)
                             continue
                     elif self.tsp_error_active:
                         if now >= self.tsp_error_wait_until:
-                            if not self.initialize_points_and_calibration(frame_copy):
+                            if not self.initialize_points_and_calibration(frame):
                                 self.tsp_error_wait_until = now + TSP_POINT_ERROR_RETRY_SECONDS
-                                try:
-                                    self.frame_queue.put(frame_copy, block=False)
-                                except queue.Full:
-                                    try:
-                                        self.frame_queue.get_nowait()
-                                        self.frame_queue.put(frame_copy, block=False)
-                                    except queue.Empty:
-                                        pass
+                                with self.lock:
+                                    self.current_frame = frame.copy()
+                                    self.frame_ready = True
                                 sleep(0.1)
                                 continue
                             else:
@@ -537,94 +411,52 @@ class ArucoTracker:
                                     self.optimal_path_ready = True
                                 initialized_points = True
                         else:
-                            try:
-                                self.frame_queue.put(frame_copy, block=False)
-                            except queue.Full:
-                                try:
-                                    self.frame_queue.get_nowait()
-                                    self.frame_queue.put(frame_copy, block=False)
-                                except queue.Empty:
-                                    pass
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
                             sleep(0.1)
                             continue
                     else:
-                        if self.initialize_points_and_calibration(frame_copy):
+                        if self.initialize_points_and_calibration(frame):
                             if self.all_points:
                                 opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
                                 self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
                                 self.optimal_path_ready = True
                             initialized_points = True
                         else:
-                            try:
-                                self.frame_queue.put(frame_copy, block=False)
-                            except queue.Full:
-                                try:
-                                    self.frame_queue.get_nowait()
-                                    self.frame_queue.put(frame_copy, block=False)
-                                except queue.Empty:
-                                    pass
+                            with self.lock:
+                                self.current_frame = frame.copy()
+                                self.frame_ready = True
                             sleep(0.1)
                             continue
 
-                # Process markers and trail updates
-                marker_map, _ = detect_aruco_markers(frame_copy)
+                marker_map, _ = detect_aruco_markers(frame)
                 id10_pos = None
                 if config.MOVING_ID in marker_map:
                     pts = marker_map[config.MOVING_ID][0]
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                     id10_pos = (cx, cy)
-                    
-                    # Update trail safely and send update to main thread
                     if not self.path_complete:
-                        with self.trail_lock:
-                            try:
-                                self.trail.append(id10_pos)
-                                # Send trail update to main thread
-                                self.trail_update_queue.put({'action': 'add', 'pos': id10_pos}, block=False)
-                            except queue.Full:
-                                # If queue is full, just continue - we'll get the next position
-                                pass
+                        self.trail.append(id10_pos)
                 else:
-                    # Send frame even if no marker detected
-                    try:
-                        self.frame_queue.put(frame_copy, block=False)
-                    except queue.Full:
-                        try:
-                            self.frame_queue.get_nowait()
-                            self.frame_queue.put(frame_copy, block=False)
-                        except queue.Empty:
-                            pass
+                    with self.lock:
+                        self.current_frame = frame.copy()
+                        self.frame_ready = True
                     sleep(0.1)
                     continue
 
-                # Update path logic
                 if not self.path_complete and id10_pos is not None:
                     self.update_path_logic(id10_pos)
 
-                # Send frame to main thread via queue
-                try:
-                    self.frame_queue.put(frame_copy, block=False)
-                except queue.Full:
-                    # Replace old frame with new one
-                    try:
-                        self.frame_queue.get_nowait()
-                        self.frame_queue.put(frame_copy, block=False)
-                    except queue.Empty:
-                        pass
+                with self.lock:
+                    self.current_frame = frame.copy()
+                    self.frame_ready = True
 
-                # Add small delay to prevent excessive CPU usage and mimic gdb behavior
                 sleep(0.1)
-                
-        except Exception as e:
-            print(f"Critical error in capture loop: {e}")
-            self.running = False
         finally:
-            # Safe camera cleanup
             if self.picam2:
                 try:
-                    print("Shutting down camera...")
                     self.picam2.stop()
-                    sleep(0.2)  # Allow camera to properly shut down
                 except Exception as e:
                     print(f"Error stopping camera: {e}")
             print("Camera resources released")
@@ -714,10 +546,8 @@ class ArucoTracker:
     def display_loop(self):
         self.restart_hovered = False
         self.solution_hovered = False
-        current_frame = None
 
         while True:
-            # Process pygame events (main thread only)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -731,38 +561,18 @@ class ArucoTracker:
                     self.restart_hovered = self.button_restart.collidepoint(event.pos)
                     self.solution_hovered = self.button_solution.collidepoint(event.pos)
 
-            # Process trail updates from capture thread
-            try:
-                while True:
-                    trail_update = self.trail_update_queue.get_nowait()
-                    if trail_update['action'] == 'add':
-                        # Trail updates are already handled in capture thread with locks
-                        # This is just for potential future use
-                        pass
-            except queue.Empty:
-                pass
-
-            # Get latest frame from capture thread via queue
-            try:
-                while True:
-                    # Get all available frames, keeping only the latest
-                    current_frame = self.frame_queue.get_nowait()
-            except queue.Empty:
-                pass
-
-            # Render GUI (all GUI operations in main thread)
-            self.screen.fill((220, 220, 220))
-
-            if current_frame is not None:
-                try:
-                    # Process frame safely
-                    rgb_frame = cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB)
+            if self.frame_ready:
+                with self.lock:
+                    frame = None
+                    if self.current_frame is not None:
+                        frame = self.current_frame.copy()
+                if frame is not None:
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     surf = pygame.surfarray.make_surface(rgb_frame.swapaxes(0, 1))
                     surf = pygame.transform.scale(surf, (VIDEO_W, VIDEO_H))
                     self.video_surf = surf
-                except Exception as e:
-                    print(f"Error processing frame for display: {e}")
-                    # Continue with previous frame if available
+
+            self.screen.fill((220, 220, 220))
 
             if self.video_surf:
                 self.screen.blit(self.video_surf, (0, 0))
@@ -771,13 +581,12 @@ class ArucoTracker:
                 if self.visited_points:
                     # Safely determine the current position for drawing
                     current_pos = None
-                    with self.trail_lock:
+                    with self.lock:
                         try:
-                            if len(self.trail) > 0:
+                            if self.trail:
                                 current_pos = self.trail[-1]
-                        except (IndexError, RuntimeError) as e:
-                            # Handle any race conditions gracefully
-                            print(f"Trail access warning: {e}")
+                        except IndexError:
+                            # Race condition: trail became empty between check and access
                             pass
                     
                     if current_pos is None and len(self.visited_points) > 0:
@@ -785,42 +594,21 @@ class ArucoTracker:
                     
                     if current_pos is not None:
                         self.draw_path(overlay, current_pos)
-                
                 self.draw_solution(overlay)
                 self.screen.blit(overlay, (0, 0))
 
-            # Draw UI elements (all in main thread)
             self.draw_info()
             self.draw_buttons()
 
-            # Update display
             pygame.display.flip()
             self.clock.tick(30)
-            
             if not self.running:
                 break
 
-        # Clean shutdown
         pygame.quit()
 
     def restart(self):
-        print("Restart initiated from main thread")
-        # Send restart command to capture thread via queue
-        try:
-            self.restart_queue.put(True, block=False)
-        except queue.Full:
-            # Clear queue and send new restart command
-            try:
-                self.restart_queue.get_nowait()
-            except queue.Empty:
-                pass
-            self.restart_queue.put(True, block=False)
-        
-        # Clear trail safely in main thread
-        with self.trail_lock:
-            self.trail.clear()
-        
-        # Reset state variables (main thread only)
+        self.trail.clear()
         self.visited_points = []
         self.path_complete = False
         self.returning_to_start = False
@@ -829,8 +617,6 @@ class ArucoTracker:
         self.tsp_error_active = False
         self.corners_error_msg = ""
         self.corners_error_active = False
-        
-        print("Restart completed")
 
 
     def run(self):
@@ -838,65 +624,30 @@ class ArucoTracker:
 
         # Initialize camera in main thread to avoid segmentation faults
         try:
-            print("Initializing camera...")
             self.picam2 = Picamera2()
-            
-            # Add delay to mimic gdb behavior and allow proper initialization
-            sleep(0.2)
-            
             config_cam = self.picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
             self.picam2.configure(config_cam)
-            
-            # Add delay after configuration
-            sleep(0.2)
-            
             self.picam2.start()
-            
-            # Extended delay after camera start to ensure stability
-            sleep(1.0)
+            sleep(1)
             print("Camera initialized successfully")
-            
         except Exception as e:
             print(f"Camera initialization failed: {e}")
             if self.picam2:
                 try:
                     self.picam2.stop()
-                    sleep(0.2)  # Allow proper cleanup
-                except Exception as cleanup_error:
-                    print(f"Error during camera cleanup: {cleanup_error}")
+                except:
+                    pass
             return
 
-        # Add delay before starting threads to mimic gdb behavior
-        sleep(0.2)
-        print("Starting capture thread...")
-        
-        try:
-            capture_thread = threading.Thread(target=self.capture_loop, name="CaptureThread")
-            capture_thread.daemon = True
-            capture_thread.start()
-            
-            # Give capture thread time to start
-            sleep(0.2)
-            print("Capture thread started, beginning display loop")
+        capture_thread = threading.Thread(target=self.capture_loop)
+        capture_thread.daemon = True
+        capture_thread.start()
 
-            # Run display loop in main thread (GUI operations must be in main thread)
-            self.display_loop()
+        self.display_loop()
 
-        except Exception as e:
-            print(f"Error during thread operations: {e}")
-            self.running = False
-        finally:
-            # Clean shutdown
-            print("Shutting down threads...")
-            self.running = False
-            
-            if 'capture_thread' in locals():
-                print("Waiting for capture thread to finish...")
-                capture_thread.join(timeout=3)
-                if capture_thread.is_alive():
-                    print("Warning: Capture thread did not shut down cleanly")
-            
-            print("Tracker shutdown complete")
+        print("Waiting for threads to finish...")
+        capture_thread.join(timeout=2)
+        print("Tracker shutdown complete")
 
 if __name__ == "__main__":
     show_menu_and_get_expected_points()
