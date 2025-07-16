@@ -438,7 +438,8 @@ class ArucoTracker:
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                     id10_pos = (cx, cy)
                     if not self.path_complete:
-                        self.trail.append(id10_pos)
+                        with self.lock:
+                            self.trail.append(id10_pos)
                 else:
                     with self.lock:
                         self.current_frame = frame.copy()
@@ -578,12 +579,13 @@ class ArucoTracker:
                 if self.visited_points:
                     # Safely determine the current position for drawing
                     current_pos = None
-                    try:
-                        if self.trail:
-                            current_pos = self.trail[-1]
-                    except IndexError:
-                        # Race condition: trail became empty between check and access
-                        pass
+                    with self.lock:
+                        try:
+                            if self.trail:
+                                current_pos = self.trail[-1]
+                        except IndexError:
+                            # Race condition: trail became empty between check and access
+                            pass
                     
                     if current_pos is None and len(self.visited_points) > 0:
                         current_pos = self.visited_points[-1]
@@ -604,7 +606,8 @@ class ArucoTracker:
         pygame.quit()
 
     def restart(self):
-        self.trail.clear()
+        with self.lock:
+            self.trail.clear()
         self.visited_points = []
         self.path_complete = False
         self.returning_to_start = False
