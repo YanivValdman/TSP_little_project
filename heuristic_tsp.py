@@ -7,8 +7,18 @@ from utils import draw_path_on_image, capture_image, detect_aruco_markers, detec
 
 
 def compute_tsp_with_convex_hull(points):
-    # Step 1: Compute the Convex Hull
-    hull = ConvexHull(points)
+    # Handle edge cases
+    if len(points) < 3:
+        # For less than 3 points, just return them in order
+        return points, sum(euclidean(points[i], points[i-1]) for i in range(1, len(points)))
+    
+    # Step 1: Compute the Convex Hull with jitter to handle colinear points
+    try:
+        hull = ConvexHull(points, qhull_options='QJ')
+    except Exception:
+        # If ConvexHull fails, fall back to a simple ordering
+        return points, sum(euclidean(points[i], points[i-1]) for i in range(1, len(points)))
+        
     hull_path = list(hull.vertices)
 
     # Step 2: Order the Convex Hull points into a cycle

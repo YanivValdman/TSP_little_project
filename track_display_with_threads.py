@@ -4,7 +4,12 @@ import pygame
 from time import sleep
 import threading
 from collections import deque
-from picamera2 import Picamera2
+try:
+    from picamera2 import Picamera2
+    PICAMERA_AVAILABLE = True
+except ImportError:
+    PICAMERA_AVAILABLE = False
+    print("Picamera2 not available - running in demo mode")
 from utils import detect_aruco_markers
 from heuristic_tsp import detect_tsp_points_in_warped_image, compute_tsp_with_convex_hull
 import time
@@ -39,6 +44,50 @@ ID10_COLOR = (255, 215, 0)
 
 # Store the current expected points in a global variable for runtime use
 CURRENT_EXPECTED_POINTS = config.EXPECTED_TSP_POINTS
+
+class MockCamera:
+    """Mock camera for testing when Picamera2 is not available"""
+    def __init__(self):
+        self.running = False
+        
+    def create_preview_configuration(self, main=None):
+        return {}
+        
+    def configure(self, config):
+        pass
+        
+    def start(self):
+        self.running = True
+        
+    def stop(self):
+        self.running = False
+        
+    def capture_array(self, mode):
+        # Generate a test image with some colored squares as mock ArUco markers
+        img = np.full((600, 800, 3), 128, dtype=np.uint8)  # Gray background
+        
+        # Add some colored rectangles to simulate ArUco markers
+        # Corner markers (red squares)
+        cv2.rectangle(img, (50, 50), (100, 100), (0, 0, 255), -1)    # Top-left (ID 1)
+        cv2.rectangle(img, (700, 50), (750, 100), (0, 0, 255), -1)   # Top-right (ID 2)
+        cv2.rectangle(img, (50, 500), (100, 550), (0, 0, 255), -1)   # Bottom-left (ID 3)
+        cv2.rectangle(img, (700, 500), (750, 550), (0, 0, 255), -1)  # Bottom-right (ID 4)
+        
+        # TSP points (blue squares) - make sure they're not colinear
+        cv2.rectangle(img, (200, 200), (230, 230), (255, 0, 0), -1)  # TSP point 1
+        cv2.rectangle(img, (450, 150), (480, 180), (255, 0, 0), -1)  # TSP point 2
+        cv2.rectangle(img, (550, 350), (580, 380), (255, 0, 0), -1)  # TSP point 3
+        cv2.rectangle(img, (250, 450), (280, 480), (255, 0, 0), -1)  # TSP point 4
+        cv2.rectangle(img, (600, 200), (630, 230), (255, 0, 0), -1)  # TSP point 5
+        
+        # Moving marker (green square) - simulates robot position
+        # Make it move slowly in a pattern
+        t = time.time() * 0.5
+        x = int(350 + 100 * np.sin(t))
+        y = int(300 + 50 * np.cos(t))
+        cv2.rectangle(img, (x, y), (x+30, y+30), (0, 255, 0), -1)   # Moving marker (ID 10)
+        
+        return img
 
 def show_wrapped_message(screen, message, font, color, bg, max_width, duration_ms=1000):
     """Display a wrapped message in the center of the window for a set duration."""
@@ -119,17 +168,26 @@ def show_menu_and_get_expected_points():
             info_surface = small_font.render("Press Enter to confirm. ESC to cancel.", True, (100, 100, 100))
             screen.blit(info_surface, (50, 160))
         else:
+            # Add title and instructions
+            title = "TSP Tracker Startup"
+            title_surface = font.render(title, True, (50, 50, 150))
+            screen.blit(title_surface, (50, 20))
+            
+            instructions = "Use UP/DOWN arrow keys to navigate, ENTER to select"
+            instructions_surface = small_font.render(instructions, True, (80, 80, 80))
+            screen.blit(instructions_surface, (50, 60))
+            
             for i, option in enumerate(options):
                 color = (0, 0, 0)
                 bg = BUTTON_COLOR_ACTIVE if i == selected else BUTTON_COLOR
-                rect = pygame.Rect(50, 80 + i*70, 500, 60)
+                rect = pygame.Rect(50, 100 + i*70, 500, 60)
                 pygame.draw.rect(screen, bg, rect)
                 text = font.render(option, True, color)
                 screen.blit(text, (rect.x + 15, rect.y + 10))
             # Timeout info (wrapped)
             info = f"Auto-selecting default in {timeout_rem}s..." if timeout_rem > 0 else "Auto-selected default."
             info_col = (100, 60, 60) if timeout_rem > 0 else (0, 120, 0)
-            draw_wrapped_text(info, small_font, info_col, 50, 30, 500, screen)
+            draw_wrapped_text(info, small_font, info_col, 50, 250, 500, screen)
 
         pygame.display.flip()
         clock.tick(30)
@@ -223,15 +281,25 @@ class ArucoTracker:
         self.video_surf = None
 
         pygame.init()
-        self.screen = pygame.display.set_mode((WIN_W, WIN_H))
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         pygame.display.set_caption("ArUco Tracker with UI")
+        # Get the actual fullscreen dimensions
+        screen_info = pygame.display.Info()
+        self.screen_w, self.screen_h = screen_info.current_w, screen_info.current_h
         self.button_font = pygame.font.SysFont(None, BUTTON_FONT_SIZE)
         self.info_font = pygame.font.SysFont(None, INFO_FONT_SIZE)
         self.error_font = pygame.font.SysFont(None, 48)
         self.clock = pygame.time.Clock()
 
-        self.button_restart = pygame.Rect(VIDEO_W + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
-        self.button_solution = pygame.Rect(self.button_restart.right + BUTTON_PAD, INFO_H + BUTTON_PAD, (RIGHT_W - 3 * BUTTON_PAD) // 2, BUTTON_H - 2 * BUTTON_PAD)
+        # Calculate layout based on actual screen size
+        self.video_w = min(VIDEO_W, self.screen_w // 2)
+        self.video_h = min(VIDEO_H, self.screen_h)
+        self.right_w = self.screen_w - self.video_w
+        self.info_h = int(self.screen_h * 2 / 3)
+        self.button_h = self.screen_h - self.info_h
+
+        self.button_restart = pygame.Rect(self.video_w + BUTTON_PAD, self.info_h + BUTTON_PAD, (self.right_w - 3 * BUTTON_PAD) // 2, self.button_h - 2 * BUTTON_PAD)
+        self.button_solution = pygame.Rect(self.button_restart.right + BUTTON_PAD, self.info_h + BUTTON_PAD, (self.right_w - 3 * BUTTON_PAD) // 2, self.button_h - 2 * BUTTON_PAD)
 
     def initialize_points_and_calibration(self, frame):
         marker_map, _ = detect_aruco_markers(frame)
@@ -345,9 +413,14 @@ class ArucoTracker:
         return total / self.pixels_per_meter
 
     def capture_loop(self):
-        picam2 = Picamera2()
-        config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
-        picam2.configure(config_cam)
+        if PICAMERA_AVAILABLE:
+            picam2 = Picamera2()
+            config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
+            picam2.configure(config_cam)
+        else:
+            picam2 = MockCamera()
+            print("Using mock camera for testing")
+            
         picam2.start()
         sleep(1)
         initialized_points = False
@@ -355,6 +428,10 @@ class ArucoTracker:
         try:
             while self.running:
                 frame = picam2.capture_array("main")
+
+                # Check if we need to reinitialize (e.g., after restart)
+                if self.all_points is None:
+                    initialized_points = False
 
                 if not initialized_points:
                     now = time.time()
@@ -462,21 +539,21 @@ class ArucoTracker:
         dist_m = self.compute_total_distance()
         dist_str = f"Total Distance: {dist_m:.2f} m"
         dist_label = self.info_font.render(dist_str, True, (50, 50, 50))
-        self.screen.blit(dist_label, (VIDEO_W + BUTTON_PAD, y))
+        self.screen.blit(dist_label, (self.video_w + BUTTON_PAD, y))
         y += linespacing
 
         num_visited = len(self.visited_points)
         num_total = len(self.all_points) if self.all_points else 0
         pts_str = f"Points Visited: {num_visited} / {num_total}"
         pts_label = self.info_font.render(pts_str, True, (50, 50, 50))
-        self.screen.blit(pts_label, (VIDEO_W + BUTTON_PAD, y))
+        self.screen.blit(pts_label, (self.video_w + BUTTON_PAD, y))
         y += linespacing
 
         if self.show_solution:
             opt_dist_m = self.compute_optimal_path_distance()
             opt_dist_str = f"Optimal Path: {opt_dist_m:.2f} m"
             opt_dist_label = self.info_font.render(opt_dist_str, True, (20, 100, 20))
-            self.screen.blit(opt_dist_label, (VIDEO_W + BUTTON_PAD, y))
+            self.screen.blit(opt_dist_label, (self.video_w + BUTTON_PAD, y))
             y += linespacing
 
         def draw_wrapped_text(text, font, color, x, y, max_width):
@@ -507,7 +584,7 @@ class ArucoTracker:
             err_text = self.tsp_error_msg + f" | Retrying in {timer_left} seconds"
             y = draw_wrapped_text(
                 err_text, self.error_font, (255, 0, 0),
-                VIDEO_W + BUTTON_PAD, y, WIN_W - VIDEO_W - 2 * BUTTON_PAD
+                self.video_w + BUTTON_PAD, y, self.screen_w - self.video_w - 2 * BUTTON_PAD
             )
             y += linespacing
 
@@ -518,7 +595,7 @@ class ArucoTracker:
             err_text = self.corners_error_msg + f" | Retrying in {timer_left} seconds"
             y = draw_wrapped_text(
                 err_text, self.error_font, (255, 0, 0),
-                VIDEO_W + BUTTON_PAD, y, WIN_W - VIDEO_W - 2 * BUTTON_PAD
+                self.video_w + BUTTON_PAD, y, self.screen_w - self.video_w - 2 * BUTTON_PAD
             )
             y += linespacing
 
@@ -531,6 +608,10 @@ class ArucoTracker:
                 if event.type == pygame.QUIT:
                     self.running = False
                     return
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.running = False
+                        return
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if self.button_restart.collidepoint(event.pos):
                         self.restart()
@@ -548,14 +629,14 @@ class ArucoTracker:
                 if frame is not None:
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     surf = pygame.surfarray.make_surface(rgb_frame.swapaxes(0, 1))
-                    surf = pygame.transform.scale(surf, (VIDEO_W, VIDEO_H))
+                    surf = pygame.transform.scale(surf, (self.video_w, self.video_h))
                     self.video_surf = surf
 
             self.screen.fill((220, 220, 220))
 
             if self.video_surf:
                 self.screen.blit(self.video_surf, (0, 0))
-                overlay = pygame.Surface((VIDEO_W, VIDEO_H), pygame.SRCALPHA)
+                overlay = pygame.Surface((self.video_w, self.video_h), pygame.SRCALPHA)
                 if self.visited_points and self.trail:
                     self.draw_path(
                         overlay,
@@ -584,6 +665,10 @@ class ArucoTracker:
         self.tsp_error_active = False
         self.corners_error_msg = ""
         self.corners_error_active = False
+        # Reset points to trigger rescanning
+        self.all_points = None
+        self.optimal_path = None
+        self.optimal_path_ready = False
 
     def run(self):
         print("Starting ArUco tracker with Pygame UI...")
