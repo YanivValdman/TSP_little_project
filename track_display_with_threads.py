@@ -203,6 +203,7 @@ class ArucoTracker:
         self.lock = threading.Lock()
         self.current_frame = None
         self.frame_ready = False
+        self.picam2 = None  # Camera will be initialized in main thread
 
 
         # For path tracking
@@ -363,21 +364,8 @@ class ArucoTracker:
         return total / self.pixels_per_meter
 
     def capture_loop(self):
-        picam2 = None
-        try:
-            picam2 = Picamera2()
-            config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
-            picam2.configure(config_cam)
-
-            picam2.start()
-            sleep(1)
-        except Exception as e:
-            print(f"Camera initialization failed: {e}")
-            if picam2:
-                try:
-                    picam2.stop()
-                except:
-                    pass
+        if not self.picam2:
+            print("Camera not initialized properly")
             self.running = False
             return
         
@@ -385,7 +373,7 @@ class ArucoTracker:
 
         try:
             while self.running:
-                frame = picam2.capture_array("main")
+                frame = self.picam2.capture_array("main")
                 if not initialized_points:
                     now = time.time()
                     if self.corners_error_active:
@@ -466,9 +454,9 @@ class ArucoTracker:
 
                 sleep(0.1)
         finally:
-            if picam2:
+            if self.picam2:
                 try:
-                    picam2.stop()
+                    self.picam2.stop()
                 except Exception as e:
                     print(f"Error stopping camera: {e}")
             print("Camera resources released")
@@ -633,6 +621,23 @@ class ArucoTracker:
 
     def run(self):
         print("Starting ArUco tracker with Pygame UI...")
+
+        # Initialize camera in main thread to avoid segmentation faults
+        try:
+            self.picam2 = Picamera2()
+            config_cam = self.picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
+            self.picam2.configure(config_cam)
+            self.picam2.start()
+            sleep(1)
+            print("Camera initialized successfully")
+        except Exception as e:
+            print(f"Camera initialization failed: {e}")
+            if self.picam2:
+                try:
+                    self.picam2.stop()
+                except:
+                    pass
+            return
 
         capture_thread = threading.Thread(target=self.capture_loop)
         capture_thread.daemon = True
