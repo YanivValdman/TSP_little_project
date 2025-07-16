@@ -24,3 +24,7 @@ Thumbs.db
 raw.jpg
 tsp_result.png
 tsp_solution.png
+
+# Test files
+test_*.py
+create_screenshots.py
