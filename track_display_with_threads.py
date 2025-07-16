@@ -316,10 +316,9 @@ class ArucoTracker:
         if not self.path_complete:
             if len(self.visited_points) > 0 and id10_pos is not None:
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], id10_pos, 4)
-            if self.returning_to_start and not self.path_complete and id10_pos is not None:
+            if self.returning_to_start and not self.path_complete:
                 pygame.draw.line(surf, CLOSING_LINE_COLOR, id10_pos, self.visited_points[0], 4)
-            if id10_pos is not None:
-                pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
+            pygame.draw.circle(surf, ID10_COLOR, id10_pos, 12)
         else:
             if len(self.visited_points) > 1:
                 pygame.draw.line(surf, PATH_COLOR, self.visited_points[-1], self.visited_points[0], 4)
@@ -364,12 +363,24 @@ class ArucoTracker:
         return total / self.pixels_per_meter
 
     def capture_loop(self):
-        picam2 = Picamera2()
-        config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
-        picam2.configure(config_cam)
+        picam2 = None
+        try:
+            picam2 = Picamera2()
+            config_cam = picam2.create_preview_configuration(main={"size": (VIDEO_W, VIDEO_H)})
+            picam2.configure(config_cam)
 
-        picam2.start()
-        sleep(1)
+            picam2.start()
+            sleep(1)
+        except Exception as e:
+            print(f"Camera initialization failed: {e}")
+            if picam2:
+                try:
+                    picam2.stop()
+                except:
+                    pass
+            self.running = False
+            return
+        
         initialized_points = False
 
         try:
@@ -438,8 +449,7 @@ class ArucoTracker:
                     cx, cy = int(np.mean(pts[:, 0])), int(np.mean(pts[:, 1]))
                     id10_pos = (cx, cy)
                     if not self.path_complete:
-                        with self.lock:
-                            self.trail.append(id10_pos)
+                        self.trail.append(id10_pos)
                 else:
                     with self.lock:
                         self.current_frame = frame.copy()
@@ -456,7 +466,11 @@ class ArucoTracker:
 
                 sleep(0.1)
         finally:
-            picam2.stop()
+            if picam2:
+                try:
+                    picam2.stop()
+                except Exception as e:
+                    print(f"Error stopping camera: {e}")
             print("Camera resources released")
 
     def draw_buttons(self):
@@ -606,8 +620,7 @@ class ArucoTracker:
         pygame.quit()
 
     def restart(self):
-        with self.lock:
-            self.trail.clear()
+        self.trail.clear()
         self.visited_points = []
         self.path_complete = False
         self.returning_to_start = False
