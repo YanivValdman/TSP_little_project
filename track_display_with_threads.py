@@ -575,6 +575,7 @@ class ArucoTracker:
         pygame.quit()
 
     def restart(self):
+        """Reset path state and rescan TSP points and path from a fresh camera frame."""
         self.trail.clear()
         self.visited_points = []
         self.path_complete = False
@@ -584,6 +585,26 @@ class ArucoTracker:
         self.tsp_error_active = False
         self.corners_error_msg = ""
         self.corners_error_active = False
+
+        # Grab a fresh frame for rescanning
+        frame = None
+        with self.lock:
+            if self.current_frame is not None:
+                frame = self.current_frame.copy()
+
+        if frame is not None:
+            # Try to reinitialize points and calibration
+            if self.initialize_points_and_calibration(frame):
+                if self.all_points:
+                    opt_path, _ = compute_tsp_with_convex_hull(self.all_points)
+                    self.optimal_path = [tuple(map(int, pt)) for pt in opt_path]
+                    self.optimal_path_ready = True
+            else:
+                # If failed, set error messages and let capture_loop handle recovery
+                if self.corners_error_active or self.tsp_error_active:
+                    pass  # Errors will be displayed and retried automatically
+        else:
+            print("Warning: Could not get a fresh frame for restart. Will retry in capture loop.")
 
     def run(self):
         print("Starting ArUco tracker with Pygame UI...")
